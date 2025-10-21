@@ -1,0 +1,5 @@
+Links (copy-paste):
+
+ER Diagram: https://lucid.app/lucidchart/fd72652f-8a0f-43f4-9f16-8f5dee4e0c7a/edit?invitationId=inv_f229ba14-f4e3-4199-823e-9b2c713cc9eb&page=0_0#
+
+Flowchart: ?
