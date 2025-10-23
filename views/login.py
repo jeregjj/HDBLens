@@ -2,6 +2,7 @@
 
 import streamlit as st
 import user_auth # Import our new user authentication module
+from views import home
 
 def app():
     st.title("Login to HDBLens")

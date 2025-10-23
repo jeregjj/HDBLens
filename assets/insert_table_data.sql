@@ -38,9 +38,16 @@ JOIN Towns t ON t.town_name = s.town
 ON CONFLICT (town_id, street_name, block_no)
 DO UPDATE SET lease_start_year = EXCLUDED.lease_start_year;
 
--- 6) Insert facts (Transactions)
+-- 6) Insert facts (Transactions) with remaining_lease_months computed
 INSERT INTO Transactions (
-  txn_month, txn_price, floor_area_sqm, flat_type, flat_model_id, storey_range_id, flat_id
+  txn_month,
+  txn_price,
+  floor_area_sqm,
+  flat_type,
+  flat_model_id,
+  storey_range_id,
+  flat_id,
+  remaining_lease_months
 )
 SELECT
   TO_DATE(TRIM(s.month), 'YYYY-MM') AS txn_month,
@@ -49,7 +56,12 @@ SELECT
   TRIM(s.flat_type) AS flat_type,
   fm.flat_model_id,
   sr.storey_range_id,
-  f.flat_id
+  f.flat_id,
+  GREATEST(
+    0,
+    ((f.lease_start_year + 99) - EXTRACT(YEAR FROM TO_DATE(TRIM(s.month), 'YYYY-MM'))) * 12
+    - EXTRACT(MONTH FROM TO_DATE(TRIM(s.month), 'YYYY-MM')) + 12
+  )::INT AS remaining_lease_months
 FROM staging_hdb s
 JOIN Towns t  ON t.town_name = TRIM(s.town)
 JOIN Flats f  ON f.town_id = t.town_id

@@ -23,8 +23,8 @@ ANALYTICS_CSV_PATH = os.getenv("DB_CSV_PATH", os.path.join(BASE_DIR, "assets/hdb
 ANALYTICS_SQL_DSN = os.getenv("SQL_DSN")
 
 # --- User SQL DB (Transactional) ---
-USER_SCHEMA_SQL_PATH = os.getenv("USER_DB_SETUP_SQL", os.path.join(BASE_DIR, "assets/user_database_setup.sql"))
-USER_SQL_DSN = os.getenv("USER_SQL_DSN")
+#USER_SCHEMA_SQL_PATH = os.getenv("USER_DB_SETUP_SQL", os.path.join(BASE_DIR, "assets/user_database_setup.sql"))
+#USER_SQL_DSN = os.getenv("USER_SQL_DSN")
 
 # --- Mongo DB (Transactional) ---
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
@@ -62,40 +62,6 @@ def get_sql_engine() -> Engine | None: # Added | None to type hint
             _SQL_ENGINE = None
             
     return _SQL_ENGINE
-
-# ---- Single engine factory for USER DB ----
-_USER_SQL_ENGINE = None
-def get_user_sql_engine() -> Engine | None: # Added | None to type hint
-    """
-    Return a SQLAlchemy engine for the TRANSACTIONAL User Postgres DB.
-    Handles connection errors gracefully.
-    """
-    global _USER_SQL_ENGINE
-    if _USER_SQL_ENGINE is None:
-        if not USER_SQL_DSN:
-            # Use st.error for user feedback in Streamlit context
-            st.error("FATAL: USER_SQL_DSN not found in .env file.") 
-            print("FATAL: USER_SQL_DSN not found in .env file.") # Also print for logs
-            return None # Return None on config error
-        
-        # --- Try/except for engine creation ---
-        try:
-            print("Creating NEW User SQL Engine")
-            _USER_SQL_ENGINE = create_engine(USER_SQL_DSN, pool_size=5, max_overflow=5)
-            # Test the connection immediately to catch errors early
-            with _USER_SQL_ENGINE.connect() as conn:
-                conn.execute(text("SELECT 1")) # Simple query to test connection
-            print("User SQL Engine connected successfully.")
-        except SQLAlchemyError as e:
-            st.error(f"FATAL: Failed to connect to User SQL DB: {e}")
-            print(f"FATAL: Failed to connect to User SQL DB: {e}")
-            _USER_SQL_ENGINE = None # Ensure it remains None on failure
-        except Exception as e: # Catch any other unexpected errors
-            st.error(f"FATAL: Unexpected error creating User SQL Engine: {e}")
-            print(f"FATAL: Unexpected error creating User SQL Engine: {e}")
-            _USER_SQL_ENGINE = None
-            
-    return _USER_SQL_ENGINE
 
 # ---- Centralized Mongo Client ----
 _MONGO_CLIENT = None
@@ -144,7 +110,45 @@ def get_mongo_collection(collection_name: str):
     # If client creation failed earlier
     return None
 
-# ---- Initialization logic ----
+
+def load_staging_from_csv(engine, csv_path: str):
+        """
+        Fast bulk-load into staging_hdb using COPY (requires psycopg2 driver).
+        Assumes CSV has a header row with these columns:
+        month,town,flat_type,block,street_name,storey_range,floor_area_sqm,
+        flat_model,lease_commence_date,remaining_lease,resale_price
+        """
+        copy_sql = """
+            COPY staging_hdb (
+                month,
+                town,
+                flat_type,
+                block,
+                street_name,
+                storey_range,
+                floor_area_sqm,
+                flat_model,
+                lease_commence_date,
+                remaining_lease,
+                resale_price
+            )
+            FROM STDIN WITH (FORMAT csv, HEADER true)
+        """
+        # Manually handle connection lifecycle (no context manager)
+        raw_conn = engine.raw_connection()
+        try:
+            cur = raw_conn.cursor()
+            # Make it idempotent
+            cur.execute("TRUNCATE TABLE staging_hdb;")
+            with open(ANALYTICS_CSV_PATH, "r", encoding="utf-8") as f:
+                cur.copy_expert(copy_sql, f)
+            raw_conn.commit()
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+            raw_conn.close()
 
 @st.cache_resource(ttl=3600)
 def init_sql_db() -> tuple[bool, str]:
@@ -153,15 +157,17 @@ def init_sql_db() -> tuple[bool, str]:
     Uses a lock to prevent race conditions.
     """
     lock = FileLock(f"{__file__}.analytics.lock")
+
     try:
         with lock.acquire(timeout=5):
             print("Attempting to init Analytics SQL DB...")
             engine = get_sql_engine()
             meta_table = "db_meta"
             schema_version = "v1.0"
-            
+
             with engine.connect() as conn:
-                with conn.begin() as trans:
+                with conn.begin():
+                    # Ensure meta table
                     conn.execute(text(f"""
                         CREATE TABLE IF NOT EXISTS {meta_table} (
                             key VARCHAR(50) PRIMARY KEY,
@@ -170,78 +176,39 @@ def init_sql_db() -> tuple[bool, str]:
                         );
                     """))
                     res = conn.execute(text(f"SELECT val FROM {meta_table} WHERE key = 'schema_version'")).fetchone()
-                    
+
                     if res and res[0] == schema_version:
                         return (True, "Analytics SQL DB: Already initialized.")
-                    
-                    print(f"Analytics SQL DB: Schema not found or version mismatch. Applying setup...")
-                    
-                    # Run the main schema setup
-                    with open(ANALYTICS_SCHEMA_SQL_PATH, "r") as f:
+
+                    print("Analytics SQL DB: Schema not found or version mismatch. Applying setup...")
+
+                    # 1) Run the main schema setup (creates staging_hdb + final tables)
+                    with open(ANALYTICS_SCHEMA_SQL_PATH, "r", encoding="utf-8") as f:
                         conn.execute(text(f.read()))
-                    
-                    # Run the data insertion
-                    with open(ANALYTICS_INSERT_SQL_PATH, "r") as f:
-                        sql = f.read().replace(":csv_path", pg_escape(ANALYTICS_CSV_PATH))
+
+            # 2) Load CSV into staging_hdb (outside the previous transaction; COPY needs raw_connection)
+            load_staging_from_csv(engine, ANALYTICS_CSV_PATH)
+
+            # 3) Run the propagation SQL to fill Towns/Flats/…/Transactions from staging_hdb
+            with engine.connect() as conn:
+                with conn.begin():
+                    with open(ANALYTICS_INSERT_SQL_PATH, "r", encoding="utf-8") as f:
+                        # If your file previously expected :csv_path, it’s no longer needed.
+                        sql = f.read()
                         conn.execute(text(sql))
 
-                    # Update meta version
-                    conn.execute(text(f"""
-                        INSERT INTO {meta_table} (key, val) VALUES ('schema_version', :version)
-                        ON CONFLICT (key) DO UPDATE SET val = :version;
-                    """), {"version": schema_version})
-                    # trans.commit()
-                    
+                    # 4) Update meta version
+                    conn.execute(
+                        text(f"""
+                            INSERT INTO {meta_table} (key, val) VALUES ('schema_version', :version)
+                            ON CONFLICT (key) DO UPDATE SET val = :version, updated_at = NOW();
+                        """),
+                        {"version": schema_version},
+                    )
+
             return (True, "Analytics SQL DB: Initialized successfully.")
     except Exception as e:
         return (False, f"Analytics SQL DB Error: {e}")
-
-@st.cache_resource(ttl=3600)
-def init_user_db() -> tuple[bool, str]:
-    """
-    Idempotent function to initialize the USER SQL DB.
-    Uses a lock to prevent race conditions.
-    """
-    lock = FileLock(f"{__file__}.user.lock")
-    try:
-        with lock.acquire(timeout=5):
-            print("Attempting to init User SQL DB...")
-            engine = get_user_sql_engine()
-            meta_table = "db_meta"
-            schema_version = "v1.0"
-            
-            with engine.connect() as conn:
-                with conn.begin() as trans:
-                    # Create meta table
-                    conn.execute(text(f"""
-                        CREATE TABLE IF NOT EXISTS {meta_table} (
-                            key VARCHAR(50) PRIMARY KEY,
-                            val VARCHAR(100) NOT NULL,
-                            updated_at TIMESTAMPTZ DEFAULT NOW()
-                        );
-                    """))
-                    # Check version
-                    res = conn.execute(text(f"SELECT val FROM {meta_table} WHERE key = 'schema_version'")).fetchone()
-                    
-                    if res and res[0] == schema_version:
-                        return (True, "User SQL DB: Already initialized.")
-                    
-                    print(f"User SQL DB: Schema not found or version mismatch. Applying setup...")
-                    
-                    # Run the user schema setup
-                    with open(USER_SCHEMA_SQL_PATH, "r") as f:
-                        conn.execute(text(f.read()))
-
-                    # Update meta version
-                    conn.execute(text(f"""
-                        INSERT INTO {meta_table} (key, val) VALUES ('schema_version', :version)
-                        ON CONFLICT (key) DO UPDATE SET val = :version;
-                    """), {"version": schema_version})
-                    # trans.commit()
-                    
-            return (True, "User SQL DB: Initialized successfully.")
-    except Exception as e:
-        return (False, f"User SQL DB Error: {e}")
 
 @st.cache_resource(ttl=3600)
 def init_mongo() -> tuple[bool, str]:

@@ -1,5 +1,5 @@
 import streamlit as st
 
-def render():
+def app():
     st.title("📊 Analytics Dashboard")
     st.write("Placeholder for analytics charts.")

@@ -11,7 +11,9 @@
 -- DROP TABLE IF EXISTS Towns CASCADE;
 -- DROP TABLE IF EXISTS staging_hdb CASCADE;
 
--- 1) Create final schema (IDENTITY columns start at 1)
+-- =========================================================
+-- 1) Final schema (IDENTITY columns start at 1)
+-- =========================================================
 CREATE TABLE IF NOT EXISTS Towns (
   town_id INT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1) PRIMARY KEY,
   town_name TEXT NOT NULL UNIQUE
@@ -36,6 +38,9 @@ CREATE TABLE IF NOT EXISTS FlatModel (
   flat_model TEXT NOT NULL UNIQUE
 );
 
+-- =========================================================
+-- Transactions table (persist remaining_lease_months)
+-- =========================================================
 CREATE TABLE IF NOT EXISTS Transactions (
   txn_id BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1 INCREMENT BY 1) PRIMARY KEY,
   txn_month DATE NOT NULL,
@@ -44,37 +49,98 @@ CREATE TABLE IF NOT EXISTS Transactions (
   flat_type TEXT NOT NULL,      -- e.g., '3 ROOM'
   flat_model_id INT NOT NULL REFERENCES FlatModel(flat_model_id) ON UPDATE CASCADE ON DELETE RESTRICT,
   storey_range_id INT NOT NULL REFERENCES StoreyRange(storey_range_id) ON UPDATE CASCADE ON DELETE RESTRICT,
-  flat_id INT NOT NULL REFERENCES Flats(flat_id) ON UPDATE CASCADE ON DELETE RESTRICT
+  flat_id INT NOT NULL REFERENCES Flats(flat_id) ON UPDATE CASCADE ON DELETE RESTRICT,
+
+  -- Stored (computed via triggers)
+  remaining_lease_months INT NOT NULL
 );
 
--- View: remaining lease in months (assumes 99-year original lease)
-CREATE OR REPLACE VIEW Transactions_WithRemainingLease AS
-SELECT
-  t.txn_id,
-  t.txn_month,
-  t.txn_price,
-  t.floor_area_sqm,
-  t.flat_type,
-  fm.flat_model,
-  sr.storey_range,
-  t.flat_id,
-  GREATEST(
-    0,
-    ((f.lease_start_year + 99) - EXTRACT(YEAR FROM t.txn_month)) * 12
-    - EXTRACT(MONTH FROM t.txn_month) + 12
-  )::INT AS remaining_lease_months_calc
-FROM Transactions t
-JOIN Flats f        ON t.flat_id = f.flat_id
-JOIN StoreyRange sr ON t.storey_range_id = sr.storey_range_id
-JOIN FlatModel fm   ON t.flat_model_id = fm.flat_model_id;
+-- =========================================================
+-- 2) Compute + propagate logic
+-- =========================================================
+CREATE OR REPLACE FUNCTION fn_compute_remaining_lease_months(p_flat_id INT, p_txn_month DATE)
+RETURNS INT
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_lease_start_year INT;
+  v_year  INT;
+  v_month INT;
+  v_result INT;
+BEGIN
+  SELECT lease_start_year INTO v_lease_start_year
+  FROM Flats
+  WHERE flat_id = p_flat_id;
 
--- Helpful indexes
+  IF v_lease_start_year IS NULL OR p_txn_month IS NULL THEN
+    RETURN 0;
+  END IF;
+
+  v_year  := EXTRACT(YEAR  FROM p_txn_month)::INT;
+  v_month := EXTRACT(MONTH FROM p_txn_month)::INT;
+
+  -- 99-year original lease, floor at zero
+  v_result := ((v_lease_start_year + 99) - v_year) * 12 - v_month + 12;
+  IF v_result < 0 THEN
+    v_result := 0;
+  END IF;
+
+  RETURN v_result;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION trg_transactions_set_remaining_lease()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.remaining_lease_months :=
+    fn_compute_remaining_lease_months(NEW.flat_id, NEW.txn_month);
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS before_set_remaining_lease ON Transactions;
+CREATE TRIGGER before_set_remaining_lease
+BEFORE INSERT OR UPDATE OF txn_month, flat_id
+ON Transactions
+FOR EACH ROW
+EXECUTE FUNCTION trg_transactions_set_remaining_lease();
+
+CREATE OR REPLACE FUNCTION trg_flats_propagate_remaining_lease()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.lease_start_year IS DISTINCT FROM OLD.lease_start_year THEN
+    UPDATE Transactions t
+    SET remaining_lease_months =
+          fn_compute_remaining_lease_months(t.flat_id, t.txn_month)
+    WHERE t.flat_id = NEW.flat_id;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS after_flats_update_lease ON Flats;
+CREATE TRIGGER after_flats_update_lease
+AFTER UPDATE OF lease_start_year
+ON Flats
+FOR EACH ROW
+EXECUTE FUNCTION trg_flats_propagate_remaining_lease();
+
+-- =========================================================
+-- 3) Helpful indexes
+-- =========================================================
 CREATE INDEX IF NOT EXISTS ix_transactions_month   ON Transactions (txn_month);
 CREATE INDEX IF NOT EXISTS ix_transactions_flat    ON Transactions (flat_id);
 CREATE INDEX IF NOT EXISTS ix_transactions_model   ON Transactions (flat_model_id);
 CREATE INDEX IF NOT EXISTS ix_transactions_storey  ON Transactions (storey_range_id);
+CREATE INDEX IF NOT EXISTS ix_transactions_remaining ON Transactions (remaining_lease_months);
 
--- 2) Create staging table (drop/recreate each run for reproducibility)
+-- =========================================================
+-- 4) Staging table (drop/recreate each run)
+-- =========================================================
 DROP TABLE IF EXISTS staging_hdb CASCADE;
 CREATE TABLE staging_hdb (
   month TEXT,
@@ -89,6 +155,36 @@ CREATE TABLE staging_hdb (
   remaining_lease TEXT,
   resale_price NUMERIC
 );
+
+-- =========================================================
+-- Create User Database Tables
+-- These are for transactional user data (logins, watchlists)
+-- =========================================================
+
+-- 1) Create Users table
+CREATE TABLE IF NOT EXISTS Users (
+    UserID SERIAL PRIMARY KEY,
+    Username VARCHAR(50) NOT NULL UNIQUE,
+    Email VARCHAR(100) NOT NULL UNIQUE,
+    PasswordHash VARCHAR(255) NOT NULL, -- Storing a strong hash
+    CreatedAt TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 2) Create Watchlist table
+CREATE TABLE IF NOT EXISTS Watchlist (
+    WatchlistID SERIAL PRIMARY KEY,
+    -- Foreign key to our new Users table. Deleting a user deletes their watchlist.
+    UserID INTEGER NOT NULL REFERENCES Users(UserID) ON DELETE CASCADE,
+    -- This is the "foreign key" to the *other* database (Analytics DB).
+    -- It is a plain integer, as we cannot enforce a real cross-database constraint.
+    txn_id INTEGER NOT NULL,
+    CreatedAt TIMESTAMPTZ DEFAULT NOW(),
+    -- Ensures a user cannot add the same flat to their watchlist multiple times
+    CONSTRAINT uq_user_txn UNIQUE (UserID, txn_id)
+);
+
+-- 3) Create helpful indexes
+CREATE INDEX IF NOT EXISTS ix_watchlist_user_id ON Watchlist (UserID);
 
 -- 3) Load CSV into staging (psql client-side COPY)
 -- Replace the path below and run this line in psql after the file executes:
