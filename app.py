@@ -1,5 +1,5 @@
 import streamlit as st
-from views import home, reviews, analytics
+from views import home, reviews, analytics, town_sentiment
 from views import login, register, profile  # Import our new login/register pages
 import hybrid_queries
 from db_config import init_sql_db, init_mongo # Import all init functions
@@ -24,7 +24,7 @@ PAGES = {
     "Home": home,
     "Analytics": analytics,
     "Reviews": reviews,
-    "Town Sentiment": hybrid_queries, 
+    "Town Sentiment": town_sentiment, 
     "Login": login,
     "Register": register,
     "Profile": profile
@@ -64,22 +64,27 @@ def main():
                 st.session_state['username'] = ""
                 st.session_state['user_id'] = None
                 st.success("You have successfully logged out!")
-                # st.experimental_rerun()
+                st.rerun()
 
         else:
             st.info("Please log in or register to access all features.")
-            pages_to_show = ["Home", "Analytics", "Reviews", "Town Sentiment", "Login", "Register"]
+            pages_to_show = ["Login", "Register"]
             selection = st.radio("Navigation", pages_to_show)
     
     # --- Run the selected page ---
     page_module = PAGES[selection]
     
     if selection == "Town Sentiment":
-        hybrid_queries.app() 
+        town_sentiment.app() 
+    elif selection == "Home":
+        home.app()
     else:
         # This calls the app() function from your view files
         # (e.g., views/home.py, views/login.py, etc.)
         page_module.app()
+
+    if selection == "Login" and st.session_state['logged_in']:
+        st.rerun()
 
 if __name__ == "__main__":
     main()
