@@ -1,384 +1,433 @@
 # views/watchlist.py
 
-import os
+import math
 import datetime as dt
-
-import numpy as np
 import pandas as pd
-import plotly.express as px
 import streamlit as st
 from sqlalchemy import text
 
-from db_config import get_sql_engine, get_mongo_collection
+from db_config import get_sql_engine
 
 # -------------------------
-# Config / connections
+# Session guard
 # -------------------------
-
-WATCH_COLL_NAME = os.getenv("MONGO_WATCHLIST_COLLECTION", "watchlists")
-
-def _watch_coll():
-    coll = get_mongo_collection(WATCH_COLL_NAME)
-    if coll is None:
-        st.error("MongoDB watchlist collection is unavailable. Check your Mongo configuration.")
-        st.stop()
-    return coll
-
 def _require_login():
-    if not st.session_state.get("logged_in"):
+    if not st.session_state.get("logged_in") or st.session_state.get("user_id") is None:
         st.error("Please log in to use your Watchlist.")
         st.stop()
 
 # -------------------------
-# Cached lookups (SQL)
+# Constants
 # -------------------------
+PAGE_SIZE = 20  # fixed 20 per page
 
+# -------------------------
+# Global CSS for key:value layout
+# -------------------------
+KV_STYLE = """
+<style>
+.kv {
+  display: grid;
+  grid-template-columns: 140px auto;
+  row-gap: 6px;
+  column-gap: 12px;
+  margin: 6px 0 2px 0;
+}
+.kv .k {
+  color: var(--text-color, #8a8f98);
+  text-transform: capitalize;
+  letter-spacing: .2px;
+}
+.kv .v {
+  color: inherit;
+  font-weight: 600;
+}
+</style>
+"""
+
+def _format_address(street_name, block_no) -> str | None:
+    street = (street_name or "").strip()
+    block = (str(block_no) if block_no is not None else "").strip()
+    if street and block:
+        return f"{street} Blk {block}"
+    if street:
+        return street
+    if block:
+        return f"Blk {block}"
+    return None
+
+def _format_lease_mm(mm) -> str | None:
+    """Convert months to 'X years Y months' with correct pluralization."""
+    try:
+        mm = int(mm)
+    except (TypeError, ValueError):
+        return None
+    mm = max(mm, 0)
+    years, months = divmod(mm, 12)
+    parts = []
+    if years:
+        parts.append(f"{years} year" + ("s" if years != 1 else ""))
+    if months or not parts:
+        parts.append(f"{months} month" + ("s" if months != 1 else ""))
+    return " ".join(parts)
+
+def render_kv(rec: dict):
+    # Build a key:value grid with friendly labels; hides txn_id and any empty values
+    address = _format_address(rec.get("street_name"), rec.get("block_no"))
+    lease_str = _format_lease_mm(rec.get("remaining_lease_months"))
+    fields = [
+        ("location",         rec.get("town_name")),
+        ("type",             rec.get("flat_type")),
+        ("floor area",       f"{rec.get('floor_area_sqm')} sqm" if rec.get("floor_area_sqm") is not None else None),
+        ("price",            f"${float(rec.get('txn_price') or 0):,.0f}"),
+        ("transaction date", str(rec.get("txn_month") or "")),
+        ("model",            rec.get("flat_model")),
+        ("storey",           rec.get("storey_range")),
+        ("address",          address),
+        ("remaining lease",  lease_str),
+    ]
+    rows = [f"<div class='k'>{k}</div><div class='v'>{v}</div>" for k, v in fields if v not in (None, "")]
+    html = f"<div class='kv'>{''.join(rows)}</div>"
+    st.markdown(html, unsafe_allow_html=True)
+
+# -------------------------
+# Cached lookups (Analytics tables)
+# -------------------------
 @st.cache_data(ttl=600)
 def load_towns() -> list[str]:
-    """Fetch town names from SQL."""
-    engine = get_sql_engine()
-    if engine is None:
+    eng = get_sql_engine()
+    if eng is None:
         return []
-    with engine.begin() as conn:
+    with eng.begin() as conn:
         rows = conn.execute(text("SELECT town_name FROM Towns ORDER BY town_name;")).fetchall()
     return [r[0] for r in rows]
 
 @st.cache_data(ttl=600)
 def load_flat_types() -> list[str]:
-    """Fetch distinct flat types from Transactions."""
-    engine = get_sql_engine()
-    if engine is None:
+    eng = get_sql_engine()
+    if eng is None:
         return []
-    with engine.begin() as conn:
+    with eng.begin() as conn:
         rows = conn.execute(text("SELECT DISTINCT flat_type FROM Transactions ORDER BY flat_type;")).fetchall()
     return [r[0] for r in rows]
 
 @st.cache_data(ttl=600)
 def load_date_bounds() -> tuple[dt.date | None, dt.date | None]:
-    """Min/max txn_month from Transactions."""
-    engine = get_sql_engine()
-    if engine is None:
+    eng = get_sql_engine()
+    if eng is None:
         return None, None
-    with engine.begin() as conn:
+    with eng.begin() as conn:
         row = conn.execute(
             text("SELECT MIN(txn_month)::date AS dmin, MAX(txn_month)::date AS dmax FROM Transactions;")
         ).mappings().first()
-    dmin = row.get("dmin") if row else None
-    dmax = row.get("dmax") if row else None
-    return dmin, dmax
+    return (row.get("dmin") if row else None, row.get("dmax") if row else None)
 
 # -------------------------
-# Watchlist storage (Mongo)
-# Support both legacy doc {towns:[...]} and new {items:[{town, flat_type}]}
+# Watchlist (same DB)
 # -------------------------
+def add_to_watchlist(user_id: int, txn_id: int) -> tuple[bool, str]:
+    eng = get_sql_engine()
+    if eng is None:
+        return False, "Database is unavailable."
+    with eng.begin() as conn:
+        row = conn.execute(
+            text("""
+                INSERT INTO Watchlist (UserID, txn_id)
+                VALUES (:uid, :tx)
+                ON CONFLICT (UserID, txn_id) DO NOTHING
+                RETURNING WatchlistID;
+            """),
+            {"uid": int(user_id), "tx": int(txn_id)},
+        ).fetchone()
+        if row:
+            return True, "Added to watchlist."
+        return False, "Already in your watchlist."
 
-def _get_doc(user_id: str) -> dict | None:
-    return _watch_coll().find_one({"user_id": user_id})
+def remove_from_watchlist(user_id: int, watchlist_id: int) -> tuple[bool, str]:
+    eng = get_sql_engine()
+    if eng is None:
+        return False, "Database is unavailable."
+    with eng.begin() as conn:
+        conn.execute(
+            text("DELETE FROM Watchlist WHERE WatchlistID = :wid AND UserID = :uid;"),
+            {"wid": int(watchlist_id), "uid": int(user_id)},
+        )
+    return True, "Removed from watchlist."
 
-def get_items(user_id: str) -> list[dict]:
-    """Return normalized favorites [{town: str, flat_type: str|None}, ...]."""
-    doc = _get_doc(user_id)
-    if not doc:
-        return []
-    if "items" in doc and isinstance(doc["items"], list):
-        # Normalize entries
-        norm = []
-        for it in doc["items"]:
-            if not it:
-                continue
-            town = it.get("town")
-            ft = it.get("flat_type")
-            if town:
-                norm.append({"town": str(town), "flat_type": (str(ft) if ft else None)})
-        return norm
-    # Legacy migration (on-read)
-    if "towns" in doc and isinstance(doc["towns"], list):
-        return [{"town": str(t), "flat_type": None} for t in doc["towns"] if t]
-    return []
-
-def _save_items(user_id: str, items: list[dict]) -> None:
-    _watch_coll().update_one(
-        {"user_id": user_id},
-        {"$set": {"user_id": user_id, "items": items}},
-        upsert=True,
-    )
-
-def add_item(user_id: str, town: str, flat_type: str | None) -> None:
-    items = get_items(user_id)
-    new_item = {"town": town, "flat_type": (flat_type or None)}
-    if new_item not in items:
-        items.append(new_item)
-        _save_items(user_id, items)
-
-def remove_item(user_id: str, idx: int) -> None:
-    items = get_items(user_id)
-    if 0 <= idx < len(items):
-        items.pop(idx)
-        _save_items(user_id, items)
-
-# -------------------------
-# Data fetch and transforms
-# -------------------------
-
-def _build_in_clause(column: str, values: list[str], prefix: str) -> tuple[str, dict]:
-    placeholders = []
-    params = {}
-    for i, v in enumerate(values):
-        key = f"{prefix}{i}"
-        placeholders.append(f":{key}")
-        params[key] = v
-    clause = f"{column} IN ({', '.join(placeholders)})" if placeholders else "1=1"
-    return clause, params
-
-@st.cache_data(ttl=600, show_spinner=False)
-def fetch_prices_full_history(towns: tuple[str, ...], start: dt.date, end: dt.date) -> pd.DataFrame:
+@st.cache_data(ttl=300, show_spinner=False)
+def list_watchlist(user_id: int) -> pd.DataFrame:
     """
-    Query ALL rows for the provided towns across the entire DB bounds once.
-    Downstream views can subset by lookback without re-querying.
+    Join Watchlist -> Transactions -> Flats -> Towns (+ dimensions) with stable aliases,
+    using LEFT JOINs and casting Watchlist.txn_id (int) to bigint to match Transactions.txn_id.
     """
-    if not towns:
-        return pd.DataFrame(columns=["month", "town", "flat_type", "price"])
-    engine = get_sql_engine()
-    if engine is None:
-        return pd.DataFrame(columns=["month", "town", "flat_type", "price"])
+    eng = get_sql_engine()
+    if eng is None:
+        return pd.DataFrame()
+    sql = text("""
+        SELECT
+            w.watchlistid            AS watchlist_id,
+            w.createdat              AS created_at,
+            t.txn_id                 AS txn_id,
+            t.txn_month::date        AS txn_month,
+            t.txn_price              AS txn_price,
+            t.floor_area_sqm         AS floor_area_sqm,
+            t.flat_type              AS flat_type,
+            t.remaining_lease_months AS remaining_lease_months,
+            tn.town_name             AS town_name,
+            f.street_name            AS street_name,
+            f.block_no               AS block_no,
+            fm.flat_model            AS flat_model,
+            sr.storey_range          AS storey_range
+        FROM Watchlist w
+        LEFT JOIN Transactions t ON t.txn_id = w.txn_id::bigint
+        LEFT JOIN Flats f        ON f.flat_id = t.flat_id
+        LEFT JOIN Towns tn       ON tn.town_id = f.town_id
+        LEFT JOIN FlatModel fm   ON fm.flat_model_id = t.flat_model_id
+        LEFT JOIN StoreyRange sr ON sr.storey_range_id = t.storey_range_id
+        WHERE w.userid = :uid
+        ORDER BY w.createdat DESC, t.txn_month DESC NULLS LAST, t.txn_id DESC NULLS LAST
+        LIMIT 500
+    """)
+    with eng.begin() as conn:
+        return pd.DataFrame(conn.execute(sql, {"uid": int(user_id)}).mappings())
 
-    where = ["t.txn_month BETWEEN :d_start AND :d_end"]
-    params = {"d_start": start, "d_end": end}
+# -------------------------
+# Search helpers (pagination)
+# -------------------------
+def _build_filters(town, flat_type, start, end, min_price, max_price, min_sqm, max_sqm):
+    where = ["1=1"]
+    params: dict = {}
+    if town and town != "ALL":
+        where.append("tn.town_name = :town")
+        params["town"] = town
+    if flat_type and flat_type != "ALL":
+        where.append("t.flat_type = :ft")
+        params["ft"] = flat_type
+    if start:
+        where.append("t.txn_month >= :d_start")
+        params["d_start"] = start
+    if end:
+        where.append("t.txn_month <= :d_end")
+        params["d_end"] = end
+    if min_price is not None and min_price > 0:
+        where.append("t.txn_price >= :pmin")
+        params["pmin"] = min_price
+    if max_price is not None:
+        where.append("t.txn_price <= :pmax")
+        params["pmax"] = max_price
+    if min_sqm is not None:
+        where.append("t.floor_area_sqm >= :smin")
+        params["smin"] = min_sqm
+    if max_sqm is not None:
+        where.append("t.floor_area_sqm <= :smax")
+        params["smax"] = max_sqm
+    return " AND ".join(where), params
 
-    town_clause, town_params = _build_in_clause("tn.town_name", list(towns), "tw_")
-    where.append(town_clause)
-    params.update(town_params)
+@st.cache_data(ttl=300, show_spinner=False)
+def search_transactions_count(town, flat_type, start, end, min_price, max_price, min_sqm, max_sqm) -> int:
+    eng = get_sql_engine()
+    if eng is None:
+        return 0
+    where_sql, params = _build_filters(town, flat_type, start, end, min_price, max_price, min_sqm, max_sqm)
+    sql = text(f"""
+        SELECT COUNT(*) AS n
+        FROM Transactions t
+        JOIN Flats f  ON f.flat_id = t.flat_id
+        JOIN Towns tn ON tn.town_id = f.town_id
+        LEFT JOIN FlatModel fm   ON fm.flat_model_id = t.flat_model_id
+        LEFT JOIN StoreyRange sr ON sr.storey_range_id = t.storey_range_id
+        WHERE {where_sql}
+    """)
+    with eng.begin() as conn:
+        return int(conn.execute(sql, params).scalar() or 0)
 
+@st.cache_data(ttl=300, show_spinner=False)
+def search_transactions_page(town, flat_type, start, end, min_price, max_price, min_sqm, max_sqm, page: int, page_size: int = PAGE_SIZE) -> pd.DataFrame:
+    eng = get_sql_engine()
+    if eng is None:
+        return pd.DataFrame()
+    where_sql, params = _build_filters(town, flat_type, start, end, min_price, max_price, min_sqm, max_sqm)
+    params = dict(params)
+    params["lim"] = int(page_size)
+    params["off"] = int((max(1, page) - 1) * page_size)
     sql = text(f"""
         SELECT
-            date_trunc('month', t.txn_month)::date AS month,
-            tn.town_name AS town,
-            t.flat_type AS flat_type,
-            t.txn_price::numeric AS price
+            t.txn_id,
+            t.txn_month::date AS txn_month,
+            t.txn_price,
+            t.floor_area_sqm,
+            t.flat_type,
+            t.remaining_lease_months,
+            tn.town_name,
+            fm.flat_model,
+            sr.storey_range,
+            f.street_name,
+            f.block_no
         FROM Transactions t
-        JOIN Flats f ON f.flat_id = t.flat_id
-        JOIN Towns tn ON tn.town_id = f.town_id
-        WHERE {' AND '.join(where)}
-        ORDER BY month ASC;
+        JOIN Flats f        ON f.flat_id = t.flat_id
+        JOIN Towns tn       ON tn.town_id = f.town_id
+        LEFT JOIN FlatModel fm   ON fm.flat_model_id = t.flat_model_id
+        LEFT JOIN StoreyRange sr ON sr.storey_range_id = t.storey_range_id
+        WHERE {where_sql}
+        ORDER BY t.txn_month DESC, t.txn_id DESC
+        LIMIT :lim OFFSET :off
     """)
-
-    with engine.begin() as conn:
-        df = pd.DataFrame(conn.execute(sql, params).mappings())
-
-    if df.empty:
-        return df
-    df["month"] = pd.to_datetime(df["month"]).dt.date
-    df["price"] = pd.to_numeric(df["price"], errors="coerce")
-    df = df.dropna(subset=["price"])
-    df["town"] = df["town"].astype(str)
-    df["flat_type"] = df["flat_type"].astype(str)
-    return df
-
-def monthly_median(df: pd.DataFrame, by: list[str]) -> pd.DataFrame:
-    if df.empty:
-        return df
-    return (
-        df.groupby(by, as_index=False)
-          .agg(median_price=("price", "median"), txn_count=("price", "count"))
-          .sort_values(by)
-    )
-
-def project_linear(series: pd.Series, periods: int) -> np.ndarray | None:
-    """Lightweight linear projection using numpy polyfit."""
-    y = series.dropna().values.astype(float)
-    n = len(y)
-    if n < 2:
-        return None
-    x = np.arange(n, dtype=float)
-    coef = np.polyfit(x, y, deg=1)
-    x_fut = np.arange(n, n + periods, dtype=float)
-    return coef[0] * x_fut + coef[1]
-
-def future_months(last_month: dt.date, periods: int) -> list[dt.date]:
-    ts = pd.Timestamp(last_month)
-    return [(ts + pd.offsets.MonthBegin(i+1)).date() for i in range(periods)]
+    with eng.begin() as conn:
+        return pd.DataFrame(conn.execute(sql, params).mappings())
 
 # -------------------------
 # Page
 # -------------------------
-
 def app():
     _require_login()
-    st.title("👀 My Watchlist")
-    st.caption("Favorites always query the full available history; use the toggles to show all months or a recent window with a projection.")  # UX note
 
-    user_id = str(st.session_state.get("user_id"))
-    all_towns = load_towns()
+    # Inject CSS for the key:value layout
+    st.markdown(KV_STYLE, unsafe_allow_html=True)
+
+    st.title("👀 My Watchlist")
+    st.caption("Save individual resale transactions to your watchlist, and view their full details below.")
+
+    try:
+        user_id = int(st.session_state.get("user_id"))
+    except Exception:
+        st.error("User profile is missing a valid numeric ID.")
+        st.stop()
+
+    towns = load_towns()
     flat_types = load_flat_types()
     dmin, dmax = load_date_bounds()
-
     if not dmin or not dmax:
         st.warning("Price data is not available yet.")
         return
 
-    # Full DB bounds
-    month_start_min = dt.date(dmin.year, dmin.month, 1)
-    month_end_max = (pd.Timestamp(year=dmax.year, month=dmax.month, day=1) + pd.offsets.MonthEnd(0)).date()
+    # Persistent UI/session keys
+    st.session_state.setdefault("watchlist_dirty", False)
+    st.session_state.setdefault("search_filters", None)   # dict of current filters
+    st.session_state.setdefault("search_page", 1)         # current page number
 
-    # --- Add favorites ---
-    st.subheader("Add favorites")
-    c1, c2, c3 = st.columns([1.5, 1.2, 0.8])
-    with c1:
-        pick_town = st.selectbox("Town", options=["Select town"] + all_towns, index=0)
-    with c2:
-        pick_flat = st.selectbox("Flat type (optional)", options=["ALL"] + flat_types, index=0)
-    with c3:
-        if st.button("Add to watchlist", type="primary"):
-            if pick_town != "Select town":
-                add_item(user_id, pick_town, None if pick_flat == "ALL" else pick_flat)
-                st.success("Added to watchlist.")
-                st.rerun()
-            else:
-                st.warning("Please select a town before adding.")
+    # -------------------------
+    # Watchlist FIRST (top of page)
+    # -------------------------
+    st.subheader("Your watchlist")
 
-    # --- List favorites ---
-    items = get_items(user_id)
-    if items:
-        st.subheader("Your favorites")
-        for idx, it in enumerate(items):
-            town = it.get("town", "")
-            ft = it.get("flat_type") or "ALL"
-            colL, colR = st.columns([0.9, 0.1])
-            with colL:
-                st.write(f"• {town} — {ft}")
-            with colR:
-                if st.button("Remove", key=f"rm_{idx}_{town}_{ft}"):
-                    remove_item(user_id, idx)
-                    st.rerun()
+    if st.session_state.get("watchlist_dirty"):
+        try:
+            list_watchlist.clear()
+        except Exception:
+            pass
+        st.session_state["watchlist_dirty"] = False
+
+    df_watch = list_watchlist(user_id)
+    if df_watch.empty:
+        st.info("Your watchlist is empty.")
     else:
-        st.info("No favorites yet. Add a town above to begin.")
-        return
+        for _, row in df_watch.iterrows():
+            with st.container(border=True):
+                left, right = st.columns([0.85, 0.15])
+                with left:
+                    render_kv(row)
+                with right:
+                    if st.button("Remove", key=f"rm_{int(row['watchlist_id'])}"):
+                        ok, msg = remove_from_watchlist(user_id, int(row["watchlist_id"]))
+                        if ok:
+                            st.toast("Removed from watchlist ✅")
+                            try:
+                                list_watchlist.clear()
+                            except Exception:
+                                pass
+                            st.session_state["watchlist_dirty"] = True
+                        else:
+                            st.toast(msg, icon="⚠️")
 
-    # --- Controls (display only; query is full history) ---
-    cc1, cc2, cc3 = st.columns([1, 1, 1])
-    with cc1:
-        all_history = st.checkbox("Use all history", value=True, help="When on, charts include every available month.")
-    with cc2:
-        lookback = st.slider("Lookback (months)", min_value=6, max_value=120, value=24, step=1,
-                             help="If all history is off, show only the last N months.")
-    with cc3:
-        horizon = st.slider("Forecast horizon", min_value=1, max_value=12, value=3, step=1,
-                            help="Months to project ahead on the median series.")
+    st.divider()
 
-    # --- One full-history query for all favorited towns ---
-    towns_unique = sorted({it["town"] for it in items if it.get("town")})
-    df_all = fetch_prices_full_history(tuple(towns_unique), start=month_start_min, end=month_end_max)
-    if df_all.empty:
-        st.info("No transactions found across favorites in the database.")
-        return
+    # -------------------------
+    # Search and add section (with pagination)
+    # -------------------------
+    st.subheader("Find transactions to add")
 
-    # Show each favorite as a card
-    st.subheader("Personalized view")
-    for it in items:
-        town = it.get("town")
-        ft = it.get("flat_type")  # None => ALL
-        label = f"{town} — {ft or 'ALL'}"
+    c1, c2, c3, c4 = st.columns([1.2, 1.2, 1.0, 1.0])
+    with c1: pick_town = st.selectbox("Town", options=["ALL"] + towns, index=0)
+    with c2: pick_flat = st.selectbox("Flat type", options=["ALL"] + flat_types, index=0)
+    with c3: start = st.date_input("From month", value=dmin, min_value=dmin, max_value=dmax)
+    with c4: end   = st.date_input("To month", value=dmax, min_value=dmin, max_value=dmax)
 
-        base = df_all[df_all["town"] == town].copy()
-        if base.empty:
-            with st.container():
-                st.markdown(f"#### {label}")
-                st.info("No data exists for this town in the database.")
-            continue
+    c5, c6, c7, c8 = st.columns([1.0, 1.0, 1.0, 1.0])
+    with c5: min_price = st.number_input("Min price", min_value=0, value=0, step=1000)
+    with c6:
+        max_price_val = st.number_input("Max price (0=none)", min_value=0, value=0, step=1000)
+        max_price = None if max_price_val == 0 else max_price_val
+    with c7:
+        min_sqm_val = st.number_input("Min sqm (0=none)", min_value=0, value=0, step=1)
+        min_sqm = None if min_sqm_val == 0 else min_sqm_val
+    with c8:
+        max_sqm_val = st.number_input("Max sqm (0=none)", min_value=0, value=0, step=1)
+        max_sqm = None if max_sqm_val == 0 else max_sqm_val
 
-        df_sel = base if not ft else base[base["flat_type"] == ft].copy()
-        # If specific flat_type has no rows, auto-fallback to ALL with a notice
-        used_ft = ft
-        if df_sel.empty:
-            df_sel = base.copy()
-            used_ft = None
-            st.info(f"No rows for {town} — {ft}; showing ALL flat types instead.")
+    a1, a2, a3 = st.columns([0.25, 0.25, 0.5])
+    with a1:
+        if st.button("Search", type="primary"):
+            st.session_state["search_filters"] = {
+                "town": pick_town,
+                "flat_type": pick_flat,
+                "start": start,
+                "end": end,
+                "min_price": (min_price if min_price and min_price > 0 else None),
+                "max_price": max_price,
+                "min_sqm": min_sqm,
+                "max_sqm": max_sqm,
+            }
+            st.session_state["search_page"] = 1  # reset to first page on new search
+    with a2:
+        if st.button("Clear search"):
+            st.session_state["search_filters"] = None
+            st.session_state["search_page"] = 1
 
-        # Apply display window if not all_history
-        if not all_history:
-            end = month_end_max
-            start = (pd.Timestamp(end) - pd.offsets.MonthBegin(lookback)).date()
-            df_sel = df_sel[(df_sel["month"] >= start) & (df_sel["month"] <= end)].copy()
+    filters = st.session_state.get("search_filters")
+    if filters:
+        # Count + pagination controls
+        total = search_transactions_count(**filters)
+        total_pages = max(1, math.ceil(total / PAGE_SIZE))
+        page = min(max(1, st.session_state.get("search_page", 1)), total_pages)
 
-        if df_sel.empty:
-            with st.container():
-                st.markdown(f"#### {town} — {used_ft or 'ALL'}")
-                st.info("No rows in the chosen display window.")
-            continue
+        # Controls
+        pc1, pc2, pc3, pc4 = st.columns([0.2, 0.35, 0.25, 0.2])
+        with pc1:
+            if st.button("◀ Prev", disabled=(page <= 1)):
+                st.session_state["search_page"] = max(1, page - 1)
+                page = st.session_state["search_page"]
+        with pc2:
+            st.caption(f"{total} results • Page {page} of {total_pages}")
+        with pc3:
+            go_to = st.number_input("Go to page", min_value=1, max_value=total_pages, value=page, step=1, label_visibility="collapsed")
+            if go_to != page:
+                st.session_state["search_page"] = int(go_to)
+                page = st.session_state["search_page"]
+        with pc4:
+            if st.button("Next ▶", disabled=(page >= total_pages)):
+                st.session_state["search_page"] = min(total_pages, page + 1)
+                page = st.session_state["search_page"]
 
-        # Aggregate monthly medians
-        df_m = monthly_median(df_sel, by=["month"]).rename(columns={"median_price": "value"})
-        latest_val = int(df_m["value"].iloc[-1])
+        # Fetch current page
+        df_page = search_transactions_page(page=page, page_size=PAGE_SIZE, **filters)
 
-        # Forecast
-        fut_vals = project_linear(df_m["value"], periods=horizon)
-        fut_months = future_months(df_m["month"].max(), horizon) if fut_vals is not None else []
-        if fut_vals is not None:
-            df_fore = pd.DataFrame({"month": fut_months, "value": fut_vals, "series": "Forecast"})
-            df_hist = df_m.assign(series="Historical")
-            df_plot = pd.concat([df_hist, df_fore], ignore_index=True)
+        if df_page.empty:
+            st.info("No transactions match your filters.")
         else:
-            df_plot = df_m.assign(series="Historical")
-
-        # Card
-        with st.container():
-            st.markdown(f"#### {town} — {used_ft or 'ALL'}")
-            k1, k2, k3 = st.columns(3)
-            k1.metric("Latest median", f"${latest_val:,}")
-            if fut_vals is not None:
-                delta_abs = float(fut_vals[-1]) - float(latest_val)
-                k2.metric(f"{horizon}‑mo change", f"${int(delta_abs):,}")
-                pct = (delta_abs / latest_val * 100) if latest_val else 0.0
-                k3.metric("Change (%)", f"{pct:.1f}%")
-            else:
-                k2.metric(f"{horizon}‑mo change", "N/A")
-                k3.metric("Change (%)", "N/A")
-
-            title = "All history" if all_history else f"Last {lookback} months"
-            fig = px.line(
-                df_plot,
-                x="month",
-                y="value",
-                color="series",
-                markers=True,
-                labels={"month": "Month", "value": "Median Price"},
-                title=f"{title} with {horizon}-month projection",
-            )
-            for tr in fig.data:
-                if getattr(tr, "name", "") == "Forecast":
-                    tr.line["dash"] = "dash"
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
-
-    # Optional: combined view
-    with st.expander("Show combined overview"):
-        def tag(row):
-            for it in items:
-                if row["town"] != it.get("town"):
-                    continue
-                ft = it.get("flat_type")
-                if ft and row["flat_type"] != ft:
-                    continue
-                return f"{row['town']} · {(ft or 'ALL')}"
-            return None
-
-        df_tag = df_all.copy()
-        df_tag["series"] = df_tag.apply(tag, axis=1)
-        df_tag = df_tag[~df_tag["series"].isna()]
-        if not all_history:
-            end = month_end_max
-            start = (pd.Timestamp(end) - pd.offsets.MonthBegin(lookback)).date()
-            df_tag = df_tag[(df_tag["month"] >= start) & (df_tag["month"] <= end)]
-        if not df_tag.empty:
-            df_series = monthly_median(df_tag, by=["month", "series"]).rename(columns={"median_price": "value"})
-            fig = px.line(
-                df_series,
-                x="month",
-                y="value",
-                color="series",
-                markers=True,
-                labels={"month": "Month", "value": "Median Price"},
-                title="Combined favorites overview",
-            )
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": True})
-        else:
-            st.info("No matching rows across favorites in the chosen display window.")
+            for _, rec in df_page.iterrows():
+                with st.container(border=True):
+                    left, right = st.columns([0.85, 0.15])
+                    with left:
+                        render_kv(rec)
+                    with right:
+                        if st.button("Add", key=f"add_{int(rec['txn_id'])}"):
+                            ok, msg = add_to_watchlist(user_id, int(rec["txn_id"]))
+                            if ok:
+                                st.toast("Added to watchlist ✅")
+                                try:
+                                    list_watchlist.clear()
+                                except Exception:
+                                    pass
+                                st.session_state["watchlist_dirty"] = True
+                            else:
+                                st.toast(msg, icon="⚠️")
