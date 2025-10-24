@@ -1,5 +1,5 @@
 import streamlit as st
-from views import home, reviews, analytics, town_sentiment
+from views import home, reviews, analytics, town_sentiment , watchlist
 from views import login, register, profile  # Import our new login/register pages
 import hybrid_queries
 from db_config import init_sql_db, init_mongo # Import all init functions
@@ -27,7 +27,8 @@ PAGES = {
     "Town Sentiment": town_sentiment, 
     "Login": login,
     "Register": register,
-    "Profile": profile
+    "Profile": profile,
+    "My Watchlist": watchlist,
     # "My Watchlist": watchlist # We will add this in Phase 1, Step 2
 }
 
@@ -54,7 +55,7 @@ def main():
         # --- DYNAMIC NAVIGATION LOGIC ---
         if st.session_state['logged_in']:
             st.success(f"Welcome, {st.session_state['username']}!")
-            pages_to_show = ["Home", "Profile", "Analytics", "Reviews", "Town Sentiment"]
+            pages_to_show = ["Home", "Profile", "Analytics", "Reviews", "Town Sentiment", "My Watchlist"]
             # We will add "My Watchlist" here in the next step
             
             selection = st.radio("Navigation", pages_to_show)
