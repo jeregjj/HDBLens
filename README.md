@@ -1,4 +1,4 @@
-# HDBLens: Hybrid Database HDB Resale Analytics
+# HDBLens: Hybrid Database HDB Resale Analytics🏘️
 
 HDBLens is a web platform designed to provide insightful analytics on the Singapore HDB (Housing & Development Board) resale market. It uniquely combines official resale transaction data with community-generated reviews to offer a holistic view of the housing market, demonstrating a hybrid database approach that leverages both relational and non-relational databases.
 
