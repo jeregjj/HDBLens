@@ -178,7 +178,7 @@ def init_sql_db() -> tuple[bool, str]:
                     res = conn.execute(text(f"SELECT val FROM {meta_table} WHERE key = 'schema_version'")).fetchone()
 
                     if res and res[0] == schema_version:
-                        return (True, "Analytics SQL DB: Already initialized.")
+                        return (True, "Analytics SQL DB: Successfully initialized.")
 
                     print("Analytics SQL DB: Schema not found or version mismatch. Applying setup...")
 
@@ -228,7 +228,7 @@ def init_mongo() -> tuple[bool, str]:
 
             res = meta.find_one({"_id": "mongo_schema_version"})
             if res and res.get("val") == schema_version:
-                return (True, "Mongo DB: Already initialized.")
+                return (True, "Mongo DB: Successfully initialized.")
 
             print(f"Mongo DB: Schema not found or version mismatch. Applying setup...")
             

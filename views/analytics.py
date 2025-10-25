@@ -171,11 +171,7 @@ def fetch_transactions(
         # Keep rows without area so non-ppsm views still work
     return df
 
-
-# -------------------------
-# Page
-# -------------------------
-
+# --- Main Page Function ---
 def app():
     st.title("📊 Analytics Dashboard")
     st.caption("Explore resale price trends, volumes, and distributions with rich filters.")
@@ -361,7 +357,7 @@ def app():
         title=f"Median {metric.lower()} over time",
     )
     fig_line.update_traces(mode="lines+markers")
-    st.plotly_chart(fig_line, config={"displayModeBar": True}, use_container_width=True)
+    st.plotly_chart(fig_line, config={'displayModeBar': True}, use_container_width=True)
 
     # Bars: monthly transaction volume (always count of rows)
     st.subheader("Monthly Transaction Volume")
@@ -372,7 +368,7 @@ def app():
         labels={"month": "Month", "txn_count": "Transactions"},
         title="Transactions per month",
     )
-    st.plotly_chart(fig_bar, config={"displayModeBar": True}, use_container_width=True)
+    st.plotly_chart(fig_bar, config={'displayModeBar': True}, use_container_width=True)
 
     st.divider()
 
@@ -389,7 +385,7 @@ def app():
             labels={ycol: metric},
             title=f"Histogram of {metric.lower()}",
         )
-        st.plotly_chart(fig_hist, config={"displayModeBar": True}, use_container_width=True)
+        st.plotly_chart(fig_hist, config={'displayModeBar': True}, use_container_width=True)
 
     with colB:
         st.subheader(f"{metric} by Category")
@@ -413,20 +409,20 @@ def app():
             labels={cat: cat.replace("_", " ").title(), ycol: metric},
             title=title,
         )
-        st.plotly_chart(fig_box, config={"displayModeBar": True}, use_container_width=True)
+        st.plotly_chart(fig_box, config={'displayModeBar': True}, use_container_width=True)
 
     st.divider()
 
     # Optional: Tabular view
     with st.expander("Show aggregated tables"):
         st.write("Monthly medians and volumes (price-based)")
-        st.dataframe(df_overall, use_container_width=True)
+        st.dataframe(df_overall, width='stretch')
         st.write(f"Grouped monthly medians ({metric})")
-        st.dataframe(df_line, use_container_width=True)
+        st.dataframe(df_line, width='stretch')
         st.write("Sample of raw filtered transactions")
         cols = ["month", "town", "flat_type", "price"]
         if "area_sqm" in df.columns:
             cols += ["area_sqm"]
         if "ppsm" in df.columns:
             cols += ["ppsm"]
-        st.dataframe(df[cols].head(1000), use_container_width=True)
+        st.dataframe(df[cols].head(1000), width='stretch')

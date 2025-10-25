@@ -140,7 +140,7 @@ def add_to_watchlist(user_id: int, txn_id: int) -> tuple[bool, str]:
             {"uid": int(user_id), "tx": int(txn_id)},
         ).fetchone()
         if row:
-            return True, "Added to watchlist."
+            return True, "Added to watchlist."            
         return False, "Already in your watchlist."
 
 def remove_from_watchlist(user_id: int, watchlist_id: int) -> tuple[bool, str]:
@@ -153,6 +153,7 @@ def remove_from_watchlist(user_id: int, watchlist_id: int) -> tuple[bool, str]:
             {"wid": int(watchlist_id), "uid": int(user_id)},
         )
     return True, "Removed from watchlist."
+
 
 @st.cache_data(ttl=300, show_spinner=False)
 def list_watchlist(user_id: int) -> pd.DataFrame:
@@ -333,6 +334,7 @@ def app():
                             st.toast("Removed from watchlist ✅")
                             try:
                                 list_watchlist.clear()
+                                st.rerun()
                             except Exception:
                                 pass
                             st.session_state["watchlist_dirty"] = True
@@ -426,6 +428,7 @@ def app():
                                 st.toast("Added to watchlist ✅")
                                 try:
                                     list_watchlist.clear()
+                                    st.rerun()
                                 except Exception:
                                     pass
                                 st.session_state["watchlist_dirty"] = True

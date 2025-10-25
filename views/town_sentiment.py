@@ -24,28 +24,9 @@ def get_flat_types():
 # --- Main Page Function ---
 def app():
     st.title("🏘️ Town Sentiment Dashboard")
-    st.markdown("Get a high-level overview of market trends and community sentiment across different HDB towns.")
-
-    # --- PHASE 1: SITE-WIDE OVERVIEW ---
-    st.header("Singapore's Resale Market and Sentiment Snapshot")
-    
-    # Get data from the correct hybrid function
-    overview_data = hybrid_overview() 
-    
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Transactions (This Month)", f"{overview_data.get('tx_this_month', 0):,}")
-    with col2:
-        st.metric("Overall Avg. Price", f"${overview_data.get('avg_price_all', 0):,}")
-    with col3:
-        st.metric("Overall Avg. Rating", f"{overview_data.get('avg_rating', 0):.1f} ★" if overview_data.get('avg_rating') else "N/A")
-    with col4:
-        st.metric(f"Most Reviewed Town", overview_data.get('most_reviewed_town', 'N/A'))
-        
-    st.divider()
 
     # --- PHASE 2: TOWN-SPECIFIC DEEP DIVE ---
-    st.header("Town-Specific Deep Dive")
+    st.header("Town-Specific Sentiment Deep Dive")
     
     # 1. Get filter options
     towns = get_town_list()

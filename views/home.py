@@ -35,26 +35,21 @@ def app():
     and rich filters.
     """)
     
-    st.title("Hybrid Snapshot")
+    st.header("Singapore's Resale Market and Sentiment Snapshot")
     st.caption("Combining market data (Postgres) with community sentiment (MongoDB)")
-
-    # =========================
-    # 1) OVERVIEW TILES (Hybrid)
-    # =========================
-    snap = _overview_cached()  # {tx_this_month, avg_price_all, avg_rating, most_reviewed_town, most_reviewed_count}
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.markdown("**Transactions (This Month)**")
-    c1.markdown(f"<span style='font-size:1.5rem;'>{snap.get('tx_this_month',0):,}</span>", unsafe_allow_html=True)
-
-    c2.markdown("**Avg Price (Islandwide)**")
-    c2.markdown(f"<span style='font-size:1.5rem;'>${(snap.get('avg_price_all') or 0):,.0f}</span>", unsafe_allow_html=True)
-
-    c3.markdown("**Avg Rating (Islandwide)**")
-    c3.markdown(f"<span style='font-size:1.5rem;'>{snap.get('avg_rating','—')}/5</span>", unsafe_allow_html=True)
-
-    c4.markdown("**Most Reviewed Town**")
-    c4.markdown(f"<span style='font-size:1.5rem;'>{snap.get('most_reviewed_town','—')} ({snap.get('most_reviewed_count',0)})</span>", unsafe_allow_html=True)
+    
+    # Get data from the correct hybrid function
+    overview_data = hybrid_overview() 
+    
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Transactions (This Month)", f"{overview_data.get('tx_this_month', 0):,}")
+    with col2:
+        st.metric("Overall Avg. Price", f"${overview_data.get('avg_price_all', 0):,}")
+    with col3:
+        st.metric("Overall Avg. Rating", f"{overview_data.get('avg_rating', 0):.1f} ★" if overview_data.get('avg_rating') else "N/A")
+    with col4:
+        st.metric(f"Most Reviewed Town", overview_data.get('most_reviewed_town', 'N/A'), overview_data.get('most_reviewed_count',0))
 
     st.divider()
 
