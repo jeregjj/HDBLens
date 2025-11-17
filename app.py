@@ -1,7 +1,6 @@
 import streamlit as st
 from views import home, reviews, analytics, town_sentiment , watchlist
 from views import login, register, profile  # Import our new login/register pages
-import hybrid_queries
 from db_config import init_sql_db, init_mongo # Import all init functions
 
 # --- Initialize session state ---
@@ -29,7 +28,6 @@ PAGES = {
     "Register": register,
     "Profile": profile,
     "My Watchlist": watchlist,
-    # "My Watchlist": watchlist # We will add this in Phase 1, Step 2
 }
 
 # --- Helper function for DB status ---
@@ -43,11 +41,9 @@ def main():
         # --- Database Status ---
         st.subheader("System Status")
         ok_pg_analytics, msg_pg_analytics = init_sql_db()
-        # ok_pg_user, msg_pg_user = init_user_db() # Call the new User DB init
         ok_mg, msg_mg = init_mongo()
         
         _alert(ok_pg_analytics, msg_pg_analytics)
-        # _alert(ok_pg_user, msg_pg_user) # Show status for User DB
         _alert(ok_mg, msg_mg)
         
         st.markdown("---")

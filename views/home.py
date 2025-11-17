@@ -2,7 +2,7 @@ import streamlit as st
 import plotly.express as px
 from sqlalchemy import text
 from db_config import get_sql_engine
-from hybrid_queries import town_profile, hybrid_overview, hybrid_affordability
+from hybrid_queries import hybrid_overview, hybrid_affordability
 
 # ---------- small helpers ----------
 @st.cache_data(ttl=300)

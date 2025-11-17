@@ -186,13 +186,6 @@ CREATE TABLE IF NOT EXISTS Watchlist (
 -- 3) Create helpful indexes
 CREATE INDEX IF NOT EXISTS ix_watchlist_user_id ON Watchlist (UserID);
 
--- 3) Load CSV into staging (psql client-side COPY)
--- Replace the path below and run this line in psql after the file executes:
--- \COPY staging_hdb FROM '/absolute/path/hdb-resale-prices.csv' CSV HEADER
-
--- If want IDs to start at 1 again, run:
--- TRUNCATE TABLE Transactions, Flats, FlatModel, StoreyRange, Towns RESTART IDENTITY CASCADE;
-
 
 
 

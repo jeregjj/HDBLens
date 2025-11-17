@@ -22,10 +22,6 @@ ANALYTICS_INSERT_SQL_PATH = os.getenv("DB_INSERT_SQL", os.path.join(BASE_DIR, "a
 ANALYTICS_CSV_PATH = os.getenv("DB_CSV_PATH", os.path.join(BASE_DIR, "assets/hdb-resale-prices.csv"))
 ANALYTICS_SQL_DSN = os.getenv("SQL_DSN")
 
-# --- User SQL DB (Transactional) ---
-#USER_SCHEMA_SQL_PATH = os.getenv("USER_DB_SETUP_SQL", os.path.join(BASE_DIR, "assets/user_database_setup.sql"))
-#USER_SQL_DSN = os.getenv("USER_SQL_DSN")
-
 # --- Mongo DB (Transactional) ---
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 MONGO_URI     = os.getenv("MONGO_URI")

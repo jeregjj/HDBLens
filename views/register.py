@@ -1,8 +1,5 @@
-# views/register.py
-# This file creates the Streamlit UI for the registration page.
-
 import streamlit as st
-import user_auth # Import our new user authentication module
+import user_auth # Import our user authentication module
 
 def app():
     st.title("Register for HDBLens")

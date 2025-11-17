@@ -1,5 +1,3 @@
-# views/analytics.py
-
 import datetime as dt
 import pandas as pd
 import plotly.express as px
@@ -12,33 +10,25 @@ from db_config import get_sql_engine
 # Cached filter lookups
 # -------------------------
 
+# All towns from Towns table for filters.
 @st.cache_data(ttl=600)
-def load_towns() -> list[str]:
-    """
-    All towns from Towns table for filters.
-    """
+def load_towns() -> list[str]:   
     engine = get_sql_engine()
     with engine.begin() as conn:
         rows = conn.execute(text("SELECT town_name FROM Towns ORDER BY town_name;")).fetchall()
     return [r[0] for r in rows]
 
-
+# All distinct flat types from Transactions for filters.
 @st.cache_data(ttl=600)
 def load_flat_types() -> list[str]:
-    """
-    All distinct flat types from Transactions for filters.
-    """
     engine = get_sql_engine()
     with engine.begin() as conn:
         rows = conn.execute(text("SELECT DISTINCT flat_type FROM Transactions ORDER BY flat_type;")).fetchall()
     return [r[0] for r in rows]
 
-
+# Min/max month available in Transactions (txn_month).
 @st.cache_data(ttl=600)
 def load_date_bounds() -> tuple[dt.date | None, dt.date | None]:
-    """
-    Min/max month available in Transactions (txn_month).
-    """
     engine = get_sql_engine()
     with engine.begin() as conn:
         row = conn.execute(
@@ -80,10 +70,10 @@ def fetch_transactions(
     date_start: dt.date,
     date_end: dt.date,
 ) -> pd.DataFrame:
-    """
-    Pull filtered rows with month, price, flat_type, town, and (if available) area_sqm.
-    Attempts Flats.floor_area_sqm first, falls back to Transactions.floor_area_sqm.
-    """
+    
+    # Pull filtered rows with month, price, flat_type, town, and (if available) area_sqm.
+    # Attempts Flats.floor_area_sqm first, falls back to Transactions.floor_area_sqm.
+    
     engine = get_sql_engine()
 
     where_sql = "WHERE t.txn_month BETWEEN :d_start AND :d_end"
@@ -234,7 +224,6 @@ def app():
     # -------------------------
     # Advanced: $/sqm filter
     # -------------------------
-    ppsm_filter_active = False
     ppsm_min, ppsm_max = None, None
 
     with st.expander("Advanced Filters"):

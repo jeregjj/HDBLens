@@ -11,18 +11,13 @@ from db_config import get_sql_engine, get_mongo_collection  # add Mongo helper
 # Default reviews collection name (same as in reviews.py)
 MONGO_COLL = os.getenv("MONGO_COLLECTION", "town_reviews")
 
-
+# Hashes a password for storing (returns UTF-8 string).
 def hash_password(password: str) -> str:
-    """Hashes a password for storing (returns UTF-8 string)."""
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
-
+# Safely compare plain password vs stored hash.
+# Accepts str/bytes/memoryview for hashed_password.
 def check_password(plain_password, hashed_password) -> bool:
-    """
-    Safely compare plain password vs stored hash.
-    Accepts str/bytes/memoryview for hashed_password.
-    """
-
     def to_bytes(v):
         if isinstance(v, bytes):
             return v
@@ -34,12 +29,9 @@ def check_password(plain_password, hashed_password) -> bool:
 
     return bcrypt.checkpw(to_bytes(plain_password), to_bytes(hashed_password))
 
-
+# Registers a new user in the User Database.
+# Returns (True, "Success Message") or (False, "Error Message")
 def register_user(username, password, email):
-    """
-    Registers a new user in the User Database.
-    Returns (True, "Success Message") or (False, "Error Message")
-    """
     if not username or not password or not email:
         return (False, "Username, password, and email cannot be empty.")
 
@@ -90,12 +82,9 @@ def register_user(username, password, email):
         print(f"Unexpected registration error: {error}")  # Log for debugging
         return (False, f"An unexpected error occurred. Please try again later.")
 
-
+# Logs in a user by checking credentials against the User Database.
+# Returns (True, user_id, "Success Message") or (False, None, "Error Message")
 def login_user(username, password):
-    """
-    Logs in a user by checking credentials against the User Database.
-    Returns (True, user_id, "Success Message") or (False, None, "Error Message")
-    """
     if not username or not password:
         return (False, None, "Username and password cannot be empty.")
 
@@ -183,14 +172,12 @@ def update_user_email(user_id: int, new_email: str) -> tuple[bool, str]:
 
         return (False, "Could not update email. Try again.")
 
-
+# Updates the user's password without requiring the current password.
+# Used for password reset / change flows.
 def update_user_password(
     user_id: int, new_password: str, confirm_password: str
 ) -> tuple[bool, str]:
-    """
-    Updates the user's password without requiring the current password.
-    Used for password reset / change flows.
-    """
+    
     if not new_password or len(new_password) < 8:
         return (False, "New password must be at least 8 characters long.")
 
@@ -220,15 +207,9 @@ def update_user_password(
         print(f"Password update error: {e}")
         return (False, "An unexpected error occurred while updating your password.")
 
-
+# Hard-delete the user row and cascade delete the user's reviews in MongoDB.
+# Requires password confirmation.
 def delete_user(user_id: int, password: str) -> tuple[bool, str]:
-    """
-    Hard-delete the user row and cascade delete the user's reviews in MongoDB.
-    Requires password confirmation.
-
-    NOTE: Cross-database operations cannot be truly atomic, but this orders
-    operations to avoid leaving reviews behind if SQL succeeds.
-    """
     engine = get_sql_engine()
     if engine is None:
         return (False, "Database connection failed.")

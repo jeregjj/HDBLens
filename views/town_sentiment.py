@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from hybrid_queries import hybrid_overview, town_profile  
+from hybrid_queries import town_profile  
 from db_config import get_sql_engine
 
 # --- Helper functions to populate filters ---
@@ -25,7 +25,6 @@ def get_flat_types():
 def app():
     st.title("🏘️ Town Sentiment Dashboard")
 
-    # --- PHASE 2: TOWN-SPECIFIC DEEP DIVE ---
     st.header("Town-Specific Sentiment Deep Dive")
     
     # 1. Get filter options
@@ -92,8 +91,6 @@ def app():
         st.info("No reviews found for this town (and filter) yet.")
     else:
         for review in latest_reviews:
-            # Note: Your town_profile function doesn't return username, 
-            # so we'll display what it does return.
             with st.container(border=True):
                 st.write(f"**Rating: {review.get('rating', 'N/A')} ★**")
                 st.write(f"*{review.get('review_text', 'No text')}*")

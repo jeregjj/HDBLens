@@ -1,6 +1,3 @@
-# views/reviews.py
-# CRUD for MongoDB with ownership checks (no updated_at field).
-
 import os
 from datetime import datetime, timezone
 from bson.objectid import ObjectId
@@ -64,11 +61,10 @@ def get_town_list(reviews_collection, meta_collection):
 def create_review(col, *, town, user_id, username, rating, review_text):
     doc = {
         "town": town,
-        "ID": user_id,                  # your existing schema
-        "username": username,           # your existing schema
+        "ID": user_id,                  
+        "username": username,           
         "rating": int(rating),
         "review_text": review_text,
-        # timezone-aware to match your sample: 2025-05-14T16:30:00.000+00:00
         "created_at": datetime.now(timezone.utc),
     }
     return col.insert_one(doc)

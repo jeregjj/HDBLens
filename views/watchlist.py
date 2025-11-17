@@ -1,5 +1,3 @@
-# views/watchlist.py
-
 import math
 import datetime as dt
 import pandas as pd

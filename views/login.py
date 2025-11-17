@@ -1,8 +1,5 @@
-# This file creates the Streamlit UI for the login page.
-
 import streamlit as st
-import user_auth # Import our new user authentication module
-from views import home
+import user_auth # Import our user authentication module
 
 def app():
     st.title("Login to HDBLens")
@@ -33,7 +30,5 @@ def app():
                 st.session_state['user_id'] = user_id # Store the user's ID
                 st.success(message)
                 st.info("Welcome! Navigate to another page to continue.")
-                # --- Remove rerun ---
-                # st.experimental_rerun() # Let Streamlit handle the rerun naturally
             else:
                 st.error(message)

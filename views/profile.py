@@ -1,5 +1,3 @@
-# pages/01_Profile.py
-
 import streamlit as st
 
 from user_auth import (
