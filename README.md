@@ -60,21 +60,7 @@ Follow these instructions to get a local copy of the project up and running.
     python -m pip install -r requirements.txt
     ```
 
-4.  **Set up environment variables:**
-    Create a file named `.env` in the root of the project directory and add the following, replacing the placeholder values with your actual database connection details:
-
-    ```env
-    # PostgreSQL Connection String
-    SQL_DSN="postgresql://user:password@host:port/database"
-
-    # MongoDB Connection Details
-    MONGO_URI="mongodb://user:password@host:port/"
-    MONGO_DB_NAME="hdblens"
-    MONGO_COLLECTION="town_reviews"
-    MONGO_META_COLLECTION="meta"
-    ```
-
-5.  **Run the application:**
+4.  **Run the application:**
     ```sh
     streamlit run app.py
     ```
@@ -95,7 +81,7 @@ The core of HDBLens is its powerful analytics dashboard. Users can:
 HDBLens demonstrates the power of a hybrid database architecture:
 
 -   **PostgreSQL** stores the normalized and structured HDB resale data, ensuring data integrity and providing a solid foundation for analytical queries.
--   **MongoDB** is used for its flexible schema, making it ideal for storing user-generated content like reviews, which can evolve over time.
+-   **MongoDB** is used for its flexible schema, making it ideal for storing user-generated content like reviews, which can evolve over time with its community.
 -   The `hybrid_queries.py` module contains functions that intelligently query both databases and join the data in the application layer. A prime example is the "Affordable & Well-Rated Towns" feature on the home page, which ranks towns based on a hybrid score that considers both median resale price (from PostgreSQL) and average user rating (from MongoDB).
 
 ### User Authentication & Profile Management
@@ -115,7 +101,7 @@ A personalized feature for logged-in users:
 -   **Full CRUD Functionality:** Users can create, read, update, and delete their own reviews for any HDB town.
 -   **Sentiment Analysis:** The reviews contribute to the overall sentiment analysis of each town, providing a qualitative layer of data that complements the quantitative market data.
 
-### Town Sentiment Analysis
+### Town Sentiment
 
 The "Town Sentiment" page allows users to perform a deep dive into a specific town. By selecting a town, users can view a detailed profile that includes:
 
