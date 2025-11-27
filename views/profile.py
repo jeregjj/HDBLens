@@ -54,7 +54,7 @@ def app():
 
     st.divider()
 
-    # --- Danger Zone: Delete Account ---
+    # --- Delete Account ---
     st.markdown("---")
     st.subheader("Account Deletion")
     st.caption("Deleting your account is permanent and cannot be undone.")

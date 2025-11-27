@@ -119,7 +119,7 @@ def hybrid_affordability(flat_type: str, budget: float, months: int = 12) -> pd.
     # Price index: closer/below budget is better → use inverse
     out["price_index"] = out["median_price"] / float(budget)
 
-    # Rating index: scale to [0..1], add small boosts for volume and recency
+    # Rating index: scale to [0.1], add small boosts for volume and recency
     out["rating_scaled"] = (out["avg_rating"].fillna(0) / 5.0)
     vol_boost = (out["reviews_count"].fillna(0) / 100.0).clip(0, 0.30)      # up to +30%
     rec_boost = (
@@ -167,12 +167,12 @@ def town_profile(town: str, flat_type: str | None = None, months: int = 12) -> d
     """)
     params = {"town": town_u}
     if flat_type:
-        params["ft"] = flat_type  # note: in your data this looks like '3 ROOM', '4 ROOM', etc. :contentReference[oaicite:4]{index=4}
+        params["ft"] = flat_type  
 
     with ENGINE.begin() as conn:
         row = conn.execute(sql, params).mappings().first() or {}
 
-    # --- Mongo side (Atlas): ratings + latest 3 reviews ---
+    # --- Mongo side: ratings + latest 3 reviews ---
     mg = list(REV.aggregate([
         {"$match": {"town": town_u}},
         {"$group": {"_id": "$town", "avg_rating": {"$avg": "$rating"}, "reviews_count": {"$sum": 1}}},

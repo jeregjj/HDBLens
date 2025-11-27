@@ -57,7 +57,7 @@ def get_town_list(reviews_collection, meta_collection):
 
     return ["ANG MO KIO", "BEDOK", "PUNGGOL", "TAMPINES", "YISHUN"]
 
-# ---------- CRUD helpers (use your existing fields) ----------
+# ---------- CRUD helpers (using existing fields) ----------
 def create_review(col, *, town, user_id, username, rating, review_text):
     doc = {
         "town": town,
@@ -73,7 +73,7 @@ def _owner_match_filter(requester_id, requester_name):
     ors = []
     if requester_id is not None:
         ors.append({"ID": requester_id})
-        ors.append({"ID": str(requester_id)})  # in case historical docs used string
+        ors.append({"ID": str(requester_id)})  
     if requester_name:
         ors.append({"username": requester_name})
     return {"$or": ors} if ors else {"_id": {"$exists": False}}  # never matches if no identity
@@ -207,9 +207,9 @@ def app():
                 st.session_state["browse_page"] = page + 1
                 st.rerun()
 
-    # =========================================================
+    # ==================
     # TAB 2: Add Review
-    # =========================================================
+    # ==================
     with add_tab:
         st.subheader("Add a Review")
         if not is_logged_in():
@@ -238,9 +238,9 @@ def app():
                     except Exception as e:
                         st.error(f"Failed to post review: {e}")
 
-    # =========================================================
+    # =================
     # TAB 3: My Reviews
-    # =========================================================
+    # =================
     with mine_tab:
         st.subheader("My Reviews")
         if not is_logged_in():

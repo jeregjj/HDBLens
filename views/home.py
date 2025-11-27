@@ -20,7 +20,6 @@ def app():
     if st.session_state['logged_in']:
         st.title(f"Welcome back, {st.session_state['username']}!")
         st.subheader("You can manage your watchlist or explore HDB analytics.")
-        # We can add more dashboard-like elements here later
     else:
         # --- Default welcome message for logged-out users ---
         st.title("Welcome to HDBLens 🏠")
@@ -53,9 +52,9 @@ def app():
 
     st.divider()
 
-    # ==========================================
-    # 2) HYBRID BUBBLE: Affordability × Ratings
-    # ==========================================
+    # ======================================
+    # HYBRID BUBBLE: Affordability × Ratings
+    # ======================================
     st.subheader("Affordable & Well-Rated Towns")
     st.caption("Rank towns by how well prices fit your budget and how well residents rate them.")
     colA, colB= st.columns([1,1])

@@ -99,7 +99,7 @@ def login_user(username, password):
             sql = text(
                 "SELECT UserID, PasswordHash FROM Users WHERE Username = :username"
             )
-            result = conn.execute(sql, {"username": username}).fetchone()  # Use fetchone() safely
+            result = conn.execute(sql, {"username": username}).fetchone() 
 
             if result:
                 user_id, hashed_password_from_db = result
@@ -230,7 +230,7 @@ def delete_user(user_id: int, password: str) -> tuple[bool, str]:
     if not check_password(password, stored_hash):
         return (False, "Password is incorrect.")
 
-    # 3) Delete reviews in Mongo first (best-effort cascade)
+    # 3) Delete reviews in Mongo first 
     deleted_reviews = 0
     try:
         coll = get_mongo_collection(MONGO_COLL)
@@ -262,7 +262,7 @@ def delete_user(user_id: int, password: str) -> tuple[bool, str]:
         return (True, f"Account deleted. Removed {deleted_reviews} review(s).")
 
     except IntegrityError:
-        # Likely FK violation; suggest soft delete if you hit this
+        # Error handling for foreign key constraints, if any
         return (
             False,
             "Account could not be deleted due to linked data. Consider soft-delete or cascade rules.",

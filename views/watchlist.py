@@ -6,17 +6,17 @@ from sqlalchemy import text
 
 from db_config import get_sql_engine
 
-# -------------------------
+# -------------
 # Session guard
-# -------------------------
+# -------------
 def _require_login():
     if not st.session_state.get("logged_in") or st.session_state.get("user_id") is None:
         st.error("Please log in to use your Watchlist.")
         st.stop()
 
-# -------------------------
+# ---------
 # Constants
-# -------------------------
+# ---------
 PAGE_SIZE = 20  # fixed 20 per page
 
 # -------------------------
@@ -70,7 +70,7 @@ def _format_lease_mm(mm) -> str | None:
     return " ".join(parts)
 
 def render_kv(rec: dict):
-    # Build a key:value grid with friendly labels; hides txn_id and any empty values
+    # Build a key:value grid with friendly labels, hidin txn_id and any empty values
     address = _format_address(rec.get("street_name"), rec.get("block_no"))
     lease_str = _format_lease_mm(rec.get("remaining_lease_months"))
     fields = [
@@ -88,9 +88,9 @@ def render_kv(rec: dict):
     html = f"<div class='kv'>{''.join(rows)}</div>"
     st.markdown(html, unsafe_allow_html=True)
 
-# -------------------------
+# ---------------------------------
 # Cached lookups (Analytics tables)
-# -------------------------
+# ---------------------------------
 @st.cache_data(ttl=600)
 def load_towns() -> list[str]:
     eng = get_sql_engine()
@@ -186,7 +186,7 @@ def list_watchlist(user_id: int) -> pd.DataFrame:
         WHERE w.userid = :uid
         ORDER BY w.createdat DESC, t.txn_month DESC NULLS LAST, t.txn_id DESC NULLS LAST
         LIMIT 500
-    """)
+    """) # This sql query selects watchlist items for a user, joining tables to get full details.
     with eng.begin() as conn:
         return pd.DataFrame(conn.execute(sql, {"uid": int(user_id)}).mappings())
 
@@ -274,9 +274,9 @@ def search_transactions_page(town, flat_type, start, end, min_price, max_price, 
     with eng.begin() as conn:
         return pd.DataFrame(conn.execute(sql, params).mappings())
 
-# -------------------------
-# Page
-# -------------------------
+# ------------
+# Landing Page
+# ------------
 def app():
     _require_login()
 

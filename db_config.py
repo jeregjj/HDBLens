@@ -16,13 +16,13 @@ load_dotenv()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_LOCK_KEY = int(os.getenv("DB_APP_LOCK_KEY", "742031"))
 
-# --- Analytics SQL DB (Read-Only) ---
+# --- Analytics SQL DB ---
 ANALYTICS_SCHEMA_SQL_PATH = os.getenv("DB_SETUP_SQL", os.path.join(BASE_DIR, "assets/database_tables_setup.sql"))
 ANALYTICS_INSERT_SQL_PATH = os.getenv("DB_INSERT_SQL", os.path.join(BASE_DIR, "assets/insert_table_data.sql"))
 ANALYTICS_CSV_PATH = os.getenv("DB_CSV_PATH", os.path.join(BASE_DIR, "assets/hdb-resale-prices.csv"))
 ANALYTICS_SQL_DSN = os.getenv("SQL_DSN")
 
-# --- Mongo DB (Transactional) ---
+# --- Mongo DB ---
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME")
 MONGO_URI     = os.getenv("MONGO_URI")
 REVIEWS_XLSX  = os.getenv("REVIEWS_XLSX", os.path.join(BASE_DIR, "assets"))
@@ -31,7 +31,7 @@ MONGO_META    = os.getenv("MONGO_META_COLLECTION")
 
 # ---- Single engine factory for ANALYTICS DB ----
 _SQL_ENGINE = None
-def get_sql_engine() -> Engine | None: # Added | None to type hint
+def get_sql_engine() -> Engine | None: 
     """
     Return a SQLAlchemy engine for the READ-ONLY Analytics Postgres DB.
     """
@@ -80,7 +80,7 @@ def get_mongo_collection(collection_name: str):
                                         server_api=ServerApi('1'),
                                         serverSelectionTimeoutMS=5000) # Timeout after 5s
             
-            # The ismaster command is cheap and does not require auth.
+            # Used as this 'ismaster' command is cheap and does not require auth.
             _MONGO_CLIENT.admin.command('ismaster') 
             print("Pinged MongoDB deployment. Successful connection!")
 
@@ -182,14 +182,14 @@ def init_sql_db() -> tuple[bool, str]:
                     with open(ANALYTICS_SCHEMA_SQL_PATH, "r", encoding="utf-8") as f:
                         conn.execute(text(f.read()))
 
-            # 2) Load CSV into staging_hdb (outside the previous transaction; COPY needs raw_connection)
+            # 2) Load CSV into staging_hdb 
             load_staging_from_csv(engine, ANALYTICS_CSV_PATH)
 
             # 3) Run the propagation SQL to fill Towns/Flats/…/Transactions from staging_hdb
             with engine.connect() as conn:
                 with conn.begin():
                     with open(ANALYTICS_INSERT_SQL_PATH, "r", encoding="utf-8") as f:
-                        # If your file previously expected :csv_path, it’s no longer needed.
+                        # If file previously expected :csv_path, it’s no longer needed.
                         sql = f.read()
                         conn.execute(text(sql))
 

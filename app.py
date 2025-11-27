@@ -52,7 +52,6 @@ def main():
         if st.session_state['logged_in']:
             st.success(f"Welcome, {st.session_state['username']}!")
             pages_to_show = ["Home", "Profile", "Analytics", "Reviews", "Town Sentiment", "My Watchlist"]
-            # We will add "My Watchlist" here in the next step
             
             selection = st.radio("Navigation", pages_to_show)
 

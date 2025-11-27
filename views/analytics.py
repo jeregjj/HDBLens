@@ -90,7 +90,7 @@ def fetch_transactions(
         where_sql += f" AND {ft_clause}"
         params.update(ft_params)
 
-    # Try 1: area from Flats
+    # Try 1: Area from Flats
     sql_flats_area = f"""
         SELECT
             date_trunc('month', t.txn_month)::date AS month,
@@ -105,7 +105,7 @@ def fetch_transactions(
         ORDER BY month ASC;
     """
 
-    # Try 2: area from Transactions
+    # Try 2: Area from Transactions
     sql_tx_area = f"""
         SELECT
             date_trunc('month', t.txn_month)::date AS month,
@@ -221,9 +221,9 @@ def app():
         st.info("No transactions found for the selected filters.")
         return
 
-    # -------------------------
-    # Advanced: $/sqm filter
-    # -------------------------
+    # ----------------------------------------------
+    # Advanced features we implemented: $/sqm filter
+    # ----------------------------------------------
     ppsm_min, ppsm_max = None, None
 
     with st.expander("Advanced Filters"):
@@ -402,7 +402,7 @@ def app():
 
     st.divider()
 
-    # Optional: Tabular view
+    # Tabular view
     with st.expander("Show aggregated tables"):
         st.write("Monthly medians and volumes (price-based)")
         st.dataframe(df_overall, width='stretch')
